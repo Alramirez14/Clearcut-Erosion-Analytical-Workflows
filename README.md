@@ -10,3 +10,5 @@ The goal of this project would be to:
   * Use geospatial data, primarily DTM (digital terrain model) and canopy cover data, over a suitable time series
   * Quantify post-clear-cut erosion and proximity to spawning habitat
   * Produce a white paper urging federal land managers to restrict upstream timber harvesting in areas supporting critical spawning habitat
+
+<img src='relative path to figure in repo'></img>
