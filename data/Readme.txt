@@ -1,1 +1,1 @@
-### Folder to store smaller data files for model implementation
+Folder to store smaller data files for model implementation
