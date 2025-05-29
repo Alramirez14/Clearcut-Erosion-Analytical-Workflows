@@ -12,3 +12,7 @@ The goal of this project would be to:
   * Produce a white paper urging federal land managers to restrict upstream timber harvesting in areas supporting critical spawning habitat
 
 <img src='River_picture.png'></img>
+
+# Model Implementation
+
+Within this repository, the folder titled ***Clearcut_RUSLE_Model*** contains all necessary code to run the model for your AOIs of choice. Please see instructions within this folder for specifics. 
