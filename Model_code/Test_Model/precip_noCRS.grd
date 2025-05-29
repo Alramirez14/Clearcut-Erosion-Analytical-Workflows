@@ -1,0 +1,27 @@
+[general]
+creator=R package 'raster'
+created=2025-05-26 12:41:15
+[data]
+datatype=FLT4S
+byteorder=little
+nbands=1
+bandorder=BIL
+categorical=FALSE
+minvalue=52.1282005310059
+maxvalue=5017.37255859375
+nodatavalue=-3.4e+38
+[legend]
+legendtype=
+values=
+color=
+[description]
+layername=PRISM_ppt_stable_4kmM3_2023_bil
+[georeference]
+nrows=621
+ncols=1405
+xmin=-125.020833333333
+ymin=24.0624999997935
+xmax=-66.4791666661985
+ymax=49.9375000000005
+projection=+proj=longlat +datum=NAD83 +no_defs
+wkt=GEOGCRS["unknown",    DATUM["North American Datum 1983",        ELLIPSOID["GRS 1980",6378137,298.257222101,            LENGTHUNIT["metre",1]],        ID["EPSG",6269]],    PRIMEM["Greenwich",0,        ANGLEUNIT["degree",0.0174532925199433],        ID["EPSG",8901]],    CS[ellipsoidal,2],        AXIS["longitude",east,            ORDER[1],            ANGLEUNIT["degree",0.0174532925199433,                ID["EPSG",9122]]],        AXIS["latitude",north,            ORDER[2],            ANGLEUNIT["degree",0.0174532925199433,                ID["EPSG",9122]]]]

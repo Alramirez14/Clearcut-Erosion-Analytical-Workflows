@@ -1,0 +1,195 @@
+---
+title: "RUSLE_model"
+author: "Alec Ramirez"
+date: "2025-05-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r environment setup}
+
+library(raster)
+library(maps)
+library(rasterVis)
+library(terra)
+library(dplyr)
+library(whitebox)
+
+#wbt_init(exe_path = "C:Users/alect/OneDrive/Desktop/WhiteboxTools_win_amd64/WBT/whitebox_tools.exe")
+
+```
+
+
+## Start with DEM processing
+
+```{r DEM}
+
+dem <- rast("Cleaned_DEM_UTM10N.tiff") %>% 
+  project("EPSG:32610", method = "bilinear")
+
+#slope setup
+
+slope <- dem %>% 
+  project("EPSG:32610", method = "bilinear") %>% 
+  terrain(v = "slope", unit = "degrees")
+  
+
+#Save for later vis
+#aspect <- terrain(dem, opt = "aspect")
+#hillshade <- hillShade(slope, aspect)
+
+#writeRaster(hillshade, "Hillshade_for_vis")
+
+```
+
+
+## Running the model
+
+```{r}
+
+#Setting up raster environment, used raster package to handle .bil file
+
+test_site <- vect("Yachats_study_polygons.shp") %>% 
+  project("EPSG:32610")
+
+# 1. Load the raw PRISM data directly
+precip_raw <- rast("PRISM_ppt_stable_4kmM3_2023_bil.bil")
+
+# 2. Assign CRS if it's missing (only if really missing — otherwise skip this!)
+# Check CRS first:
+crs(precip_raw)
+
+# If CRS is missing or wrong, you can assign the correct CRS (not project)
+# PRISM data is typically in geographic coordinates (EPSG:4326)
+crs(precip_raw) <- "EPSG:4326"
+
+# 3. Project to UTM Zone 10N (EPSG:32610)
+precip_utm <- project(precip_raw, "EPSG:32610", method = "bilinear")
+
+# 4. Write the output raster to disk
+writeRaster(precip_utm, "precipUTMv2.tif", overwrite = TRUE)
+
+# 5. Optional: visualize
+plot(precip_utm)
+
+#Now Landsat
+
+NDVI_2023 <- rast("Landsat8_NDVI_2023_yachats.tif")
+
+reference <- NDVI_2023 #assign resampling layer
+
+#K Factor 
+
+K <- rast("K_factor.tif") %>% 
+  '/'(100)
+
+K_utm <- project(K, "EPSG:32610", method = "near")
+
+#Resampling
+
+slope_resampled <- resample(slope, reference, method = "near")
+
+precip_resampled <- resample(precip_utm, reference, method = "near")
+
+K_resampled <- resample(K_utm, reference, method = "near")
+
+dem_resampled <- resample(dem, reference, method = "near")
+
+#Clipping
+
+slope_clipped <- mask(crop(slope_resampled, test_site), test_site)
+
+precip_clipped <- mask(crop(precip_resampled, test_site), test_site)
+
+K_clipped <- mask(crop(K_resampled, test_site), test_site)
+
+dem_clipped <- mask(crop(dem_resampled, test_site), test_site)
+```
+## Calculating R Factor
+
+```{r}
+
+calculate_r_moore <- function (p) {
+  ke <- 11.46*p - 2226
+  r <- 0.029*ke - 26
+  r_si <- 17.02*r
+  return(r_si)
+}
+
+r_moore <- app(x = precip_clipped, fun = calculate_r_moore)
+
+calculate_R_wischmeier <- function(p_mm) {
+  p_in <- p_mm / 25.4  # Convert mm to inches
+  R_in <- 0.7397 * p_in^1.847  # Wischmeier & Smith formula
+  return(R_in)  # Units: MJ mm ha-1 h-1 yr-1
+}
+
+r_wischmeier <- app(x = precip_clipped, fun = calculate_R_wischmeier)
+
+
+
+```
+
+## Creating LS and flowaccum
+
+```{r}
+
+wbt_set_working_dir(getwd())
+
+flow_dir_clipped <- terrain(dem_clipped, 
+                            v = "flowdir", 
+                            unit = "radians")
+
+flow_acc_clipped <- flowAccumulation(flow_dir_clipped)
+
+cell_size <- res(dem_clipped)[1]  # get cell size in meters (assuming square cells)
+
+# Convert slope to radians if it’s in degrees:
+slope_rad <- slope_clipped * (pi / 180)  # if slope in degrees; skip if already radians
+
+# Set exponents:
+m <- 0.5
+n <- 1.3
+
+# Calculate LS factor raster:
+LS <- ((flow_acc_clipped * cell_size) / 22.13)^m * (sin(slope_rad) / 0.0896)^n
+
+# Optional: handle zero slope or zero flow accumulation to avoid NaNs
+LS <- clamp(LS, lower=0, upper=15)
+
+
+```
+
+## Calculate Cover Factor C
+
+```{r}
+
+calculate_c_knijff <- function(ndvi) {
+  alpha <- 2
+  beta <- 0.5  # smaller than 1 to make the curve responsive
+  c <- exp(-alpha * (ndvi / beta - ndvi))
+  c <- ifelse(c > 1, 1, c)
+  return(c)
+}
+
+
+c_factor <- app(NDVI_2023, calculate_c_knijff)
+
+c_resampled <- resample(c_factor, reference, method = "near")
+
+C <- mask(crop(c_resampled, test_site), test_site)
+
+```
+
+## Run RUSLE
+
+```{r}
+RUSLE <- r_wischmeier * K_clipped * LS * C 
+
+RUSLE_pixel <- RUSLE * 0.09
+
+```
+
