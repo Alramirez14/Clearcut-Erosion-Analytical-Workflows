@@ -13,21 +13,67 @@ require(stringr)
 
 ###Load Study Site
 
-test_site_path <- ("your/test/site/here.shp")
+test_site_path <- ("sample_data/sample_site/Yachats_study_polygons.shp")
 
 test_site <- vect(test_site_path) %>% 
   project("EPSG:32610")
 
+###Establish reference image with one NDVI file
+
+first_NDVI_image_path <- ("sample_data/NDVI/Landsat8_NDVI_2013.tif")
+
+reference <- rast(first_NDVI_image_path)
+
 ###Load DEM
 
-dem <- rast("Your/DEM.tif") %>% 
+dem <- rast("sample_data/DEM/DEM_UTM10N_clipped.tiff") %>% 
   project("EPSG:32610", method = "near")
+
+### Calculate Cover Factor C
+
+# Define folders
+ndvi_folder <- "sample_data/NDVI"
+output_c_folder <- "processed_C_factors"
+dir.create(output_c_folder, showWarnings = FALSE)
+
+# Load all NDVI files
+ndvi_files <- list.files(ndvi_folder, pattern = "\\.tif$", full.names = TRUE)
+
+# Define the C factor calculation function (Knijff et al.)
+calculate_c_knijff <- function(ndvi) {
+  alpha <- 2
+  beta <- 0.5
+  c <- exp(-alpha * (ndvi / beta - ndvi))
+  c <- ifelse(c > 1, 1, c)
+  return(c)
+}
+
+# Loop through NDVI files
+for (file in ndvi_files) {
+  year <- str_extract(basename(file), "\\d{4}")
+  if (is.na(year)) next
+  
+  ndvi <- rast(file)
+  ndvi_projected <- project(ndvi, "EPSG:32610", method = "near")
+  
+  # Calculate C factor
+  c_factor <- app(ndvi_projected, calculate_c_knijff)
+  
+  # Clip and mask to study site
+  c_clipped <- mask(crop(c_factor, test_site), test_site)
+  
+  # Resample to match reference raster
+  c_resampled <- resample(c_clipped, reference, method = "near")
+  
+  # Save output
+  writeRaster(c_resampled, file.path(output_c_folder, paste0("C_factor_", year, ".tif")), overwrite = TRUE)
+}
 
 ###Process Precipitation Data
 
 # Set the folder path where annual precipitation rasters are stored
 
-precip_folder <- "Your/precip/folder/path"  # e.g., "data/precip/"
+precip_folder <- "sample_data/precip_raw"  # e.g., "data/precip/"
 precip_files <- list.files(precip_folder, pattern = "\\.bil$", full.names = TRUE)
 
 # Define the destination folder for processed precipitation rasters
@@ -66,22 +112,16 @@ for (file in precip_files) {
 
 ###K Factor 
 
-K <- rast("Your/K/factor.tif") %>% 
+K <- rast("sample_data/soil_data/k_utm_v2.tif") %>% 
   '/'(100) #correcting unit scale for RUSLE
 
 K_projected <- project(K, "EPSG:32610", method = "near")
-
-###Assign NDVI as reference layer (smallest size, highest res) 
-
-#---! NEED TO IMPLEMENT LOOP FOR ANNUAL VALUES !---#
-
-reference <- NDVI_2023
 
 ###Clip and mask static for handling
 
 K_clipped <- mask(crop(K_projected, test_site), test_site)
 
-dem_clipped <- mask(crop(dem_resampled, test_site), test_site)
+dem_clipped <- mask(crop(dem, test_site), test_site)
 
 ###Calculate slope on clipped DEM
 
@@ -89,57 +129,60 @@ slope_clipped <- dem_clipped %>%
   project("EPSG:32610", method = "near") %>% 
   terrain(v = "slope", unit = "degrees")
 
-###Resample for homogenous resolution/grid
+###Resample for homogeneous resolution/grid
 
 #---! NEED TO IMPLEMENT LOOP FOR ANNUAL VALUES !---#
 
 slope_resampled <- resample(slope_clipped, reference, method = "near")
 
-precip_resampled <- resample(precip_clipped, reference, method = "near")
-
 K_resampled <- resample(K_clipped, reference, method = "near")
+
+output_K_folder <- "processed_K_factor"
+dir.create(output_K_folder, showWarnings = FALSE)
+
+writeRaster(K_resampled, file.path(output_K_folder, "K.tif"), overwrite = TRUE)
 
 dem_resampled <- resample(dem_clipped, reference, method = "near")
 
-#NDVI is implicitly resampled as it is defined as the reference layer
+#NDVI is implicitly resampled as it is defined as the reference layer, and precip
+#was resampled in the batch processing step
 
 ###Calculate R Factor (work in progress)
 
-#Utilizing Moore et al. method (high values)
-
-
-#---! NEED TO IMPLEMENT LOOP FOR ANNUAL VALUES !---#
-
-calculate_r_moore <- function (p) {
-  ke <- 11.46*p - 2226
-  r <- 0.029*ke - 26
-  r_si <- 17.02*r
+calculate_r_moore <- function(p) {
+  ke <- 11.46 * p - 2226
+  r <- 0.029 * ke - 26
+  r_si <- 17.02 * r
   return(r_si)
 }
 
-r_moore <- app(x = precip_resampled, fun = calculate_r_moore)
-
-#Utilizing Wischmeier & Smith method (lower but still inflated)
 calculate_R_wischmeier <- function(p_mm) {
   p_in <- p_mm / 25.4  
-  R_in <- 0.7397 * p_in^1.847  # Wischmeier & Smith formula
-  return(R_in)  # Units: MJ mm ha-1 h-1 yr-1
+  R_in <- 0.7397 * p_in^1.847
+  return(R_in)
 }
 
-r_wischmeier <- app(x = precip_resampled, fun = calculate_R_wischmeier)
+output_rmoore_folder <- "processed_Rmoore_factors"
+dir.create(output_rmoore_folder, showWarnings = FALSE)
 
-for (file in output_precip_folder) {
-  year <- str_extract(basename(file), "\\d{4}")
-  if (is.na(year)) next  # Skip files without a valid year
+output_rwisch_folder <- "processed_Rwisch_factors"
+dir.create(output_rwisch_folder, showWarnings = FALSE)
+
+processed_files <- list.files(output_precip_folder, pattern = "\\.tif$", full.names = TRUE)
+
+for (file in processed_files) {
+  year <- stringr::str_extract(basename(file), "\\d{4}")
+  if (is.na(year)) next
   
-  # Calculate R factors
-  r_moore <- app(precip_resampled, calculate_r_moore)
-  r_wisch <- app(precip_resampled, calculate_R_wischmeier)
+  precip <- terra::rast(file)
   
-  # Save R factor rasters
-  writeRaster(r_moore, file.path(output_r_folder, paste0("R_moore_", year, ".tif")), overwrite = TRUE)
-  writeRaster(r_wisch, file.path(output_r_folder, paste0("R_wisch_", year, ".tif")), overwrite = TRUE)
+  r_moore <- terra::app(precip, calculate_r_moore)
+  r_wisch <- terra::app(precip, calculate_R_wischmeier)
+  
+  writeRaster(r_moore, file.path(output_rmoore_folder, paste0("R_moore_", year, ".tif")), overwrite = TRUE)
+  writeRaster(r_wisch, file.path(output_rwisch_folder, paste0("R_wisch_", year, ".tif")), overwrite = TRUE)
 }
+
 
 ###Create LS and Flow accumulation rasters
 
@@ -151,52 +194,17 @@ flow_acc <- flowAccumulation(flow_dir)
 
 cell_size <- res(dem_resampled)[1]  # get cell size in meters (assuming square cells)
 
-slope_rad <- slope_clipped * (pi / 180)  # if slope in degrees; skip if already radians
+slope_rad <- slope_resampled * (pi / 180)  # if slope in degrees; skip if already radians
 
 m <- 0.5
 n <- 1.3
 
-LS <- ((flow_acc_clipped * cell_size) / 22.13)^m * (sin(slope_rad) / 0.0896)^n
+LS <- ((flow_acc * cell_size) / 22.13)^m * (sin(slope_rad) / 0.0896)^n
 
-writeRaster(LS) #tweak for desired output dir
+output_ls_folder <- "processed_LS_factor"
+dir.create(output_ls_folder, showWarnings = FALSE)
 
-### Calculate Cover Factor C
+writeRaster(LS, file.path(output_ls_folder, "LS.tif"), overwrite = TRUE) #tweak for desired output dir
 
-# Define folders
-ndvi_folder <- "Your/NDVI/folder/path"
-output_c_folder <- "processed_C_factors"
-dir.create(output_c_folder, showWarnings = FALSE)
 
-# Load all NDVI files
-ndvi_files <- list.files(ndvi_folder, pattern = "\\.tif$", full.names = TRUE)
-
-# Define the C factor calculation function (Knijff et al.)
-calculate_c_knijff <- function(ndvi) {
-  alpha <- 2
-  beta <- 0.5
-  c <- exp(-alpha * (ndvi / beta - ndvi))
-  c <- ifelse(c > 1, 1, c)
-  return(c)
-}
-
-# Loop through NDVI files
-for (file in ndvi_files) {
-  year <- str_extract(basename(file), "\\d{4}")
-  if (is.na(year)) next
-  
-  ndvi <- rast(file)
-  ndvi_projected <- project(ndvi, "EPSG:32610", method = "near")
-  
-  # Calculate C factor
-  c_factor <- app(ndvi_projected, calculate_c_knijff)
-  
-  # Resample to match reference raster
-  c_resampled <- resample(c_factor, reference, method = "near")
-  
-  # Clip and mask to study site
-  c_clipped <- mask(crop(c_resampled, test_site), test_site)
-  
-  # Save output
-  writeRaster(c_clipped, file.path(output_c_folder, paste0("C_factor_", year, ".tif")), overwrite = TRUE)
-}
 
