@@ -16,3 +16,4 @@ The RUSLE_viz.R will create a variety of figures for data visualization. This wi
 run from the project directory with no need for modification. Some examples are available in 
 the "Results" subdirectory of this repository.
 
+***The results of running the model are present in this directory as well***
