@@ -11,7 +11,7 @@ The goal of this project would be to:
   * Quantify post-clear-cut erosion and proximity to spawning habitat
   * Produce a white paper urging federal land managers to restrict upstream timber harvesting in areas supporting critical spawning habitat
 
-<img src='River_picture.png'></img>
+<img src='Example_site_data/River_picture.png'></img>
 
 # Model Implementation
 
