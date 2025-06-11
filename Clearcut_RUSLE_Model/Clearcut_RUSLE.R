@@ -38,17 +38,7 @@ ndvi_folder <- "sample_data/NDVI"
 
 prev_ndvi <- NA  # initialize outside the loop
 
-
-# Initialize results data frame
-rusle_results <- data.frame(
-  Year = character(),
-  Mean_A = numeric(),
-  SD_A = numeric(),
-  Mean_R = numeric(),
-  Mean_K = numeric(),
-  Mean_LS = numeric(),
-  Mean_C = numeric(),
-  stringsAsFactors = FALSE
+ingsAsFactors = FALSE
 )
 
 # Loop through each year
@@ -125,4 +115,111 @@ for (year in sort(common_years)) {
 # Save results to CSV
 write.csv(rusle_results, "rusle_summary_by_year.csv", row.names = FALSE)
 
+###Calculate for each pixel for higher granularity
 
+rusle_pixel_data <- data.frame()
+prev_ndvi_vals <- NULL
+
+for (year in sort(common_years)) {
+  message("Processing year: ", year)
+  
+  # Get file paths for R, C, NDVI
+  r_path <- r_files[which(r_years == year)]
+  c_path <- c_files[which(c_years == year)]
+  ndvi_path <- list.files(ndvi_folder, pattern = paste0(year, ".*\\.tif$"), full.names = TRUE)
+  
+  # Load rasters
+  R <- rast(r_path)
+  C <- rast(c_path)
+  
+  # Check raster alignment of R, K, LS, C before calculation
+  # Assuming K and LS are already loaded and aligned (preloaded outside loop)
+  # Align R to K
+  if (!compareGeom(R, K, stopOnError = FALSE)) {
+    R <- resample(R, K, method = "bilinear")
+  }
+  # Align C to K
+  if (!compareGeom(C, K, stopOnError = FALSE)) {
+    C <- resample(C, K, method = "bilinear")
+  }
+  
+  # Calculate A raster
+  A <- R * K * LS * C
+  
+  # Check that A is valid and non-empty
+  A_vals <- as.vector(values(A))
+  if (length(A_vals) == 0 || all(is.na(A_vals))) {
+    warning(paste("No valid data in A raster for year", year, "- skipping this year"))
+    next
+  }
+  
+  # Load NDVI raster, project, mask, resample
+  if (length(ndvi_path) == 1) {
+    ndvi_raster <- rast(ndvi_path)
+    # Reproject NDVI to match K
+    if (!compareGeom(ndvi_raster, K, stopOnError = FALSE)) {
+      ndvi_raster <- project(ndvi_raster, crs(K), method = "near")
+    }
+    # Crop and mask to study area if needed, here assumed 'test_site' is a polygon (SpatVector)
+    ndvi_crop <- crop(ndvi_raster, ext(K))
+    ndvi_mask <- mask(ndvi_crop, K)
+    ndvi_resampled <- resample(ndvi_mask, K, method = "bilinear")
+    
+    ndvi_vals <- as.vector(values(ndvi_resampled))
+  } else {
+    warning("NDVI file for year ", year, " not found or ambiguous.")
+    ndvi_vals <- rep(NA, ncell(K))
+  }
+  
+  # Calculate delta NDVI compared to previous year
+  if (!is.null(prev_ndvi_vals)) {
+    # Make sure lengths match
+    if (length(ndvi_vals) == length(prev_ndvi_vals)) {
+      delta_ndvi_vals <- ndvi_vals - prev_ndvi_vals
+    } else {
+      warning(paste("NDVI length mismatch for year", year))
+      delta_ndvi_vals <- rep(NA, length(ndvi_vals))
+    }
+  } else {
+    delta_ndvi_vals <- rep(NA, length(ndvi_vals))
+  }
+  
+  # Extract values for other rasters
+  R_vals <- as.vector(values(R))
+  K_vals <- as.vector(values(K))
+  LS_vals <- as.vector(values(LS))
+  C_vals <- as.vector(values(C))
+  # A_vals already extracted
+  
+  # Confirm all vectors have the same length
+  val_lengths <- c(length(R_vals), length(K_vals), length(LS_vals), length(C_vals), length(A_vals), length(ndvi_vals), length(delta_ndvi_vals))
+  if (length(unique(val_lengths)) != 1) {
+    warning(paste("Raster value lengths mismatch for year", year, "- skipping"))
+    next
+  }
+  
+  # Build data frame for this year
+  df <- data.frame(
+    Year = year,
+    cell = 1:length(A_vals),
+    R = R_vals,
+    K = K_vals,
+    LS = LS_vals,
+    C = C_vals,
+    NDVI = ndvi_vals,
+    Delta_NDVI = delta_ndvi_vals,
+    A = A_vals
+  )
+  
+  # Remove rows with NA in A (outside study area etc.)
+  df <- df %>% filter(!is.na(A))
+  
+  # Append to combined data frame
+  rusle_pixel_data <- bind_rows(rusle_pixel_data, df)
+  
+  # Store current NDVI values for next year delta calculation
+  prev_ndvi_vals <- ndvi_vals
+}
+
+# Save or return rusle_pixel_data as needed
+write.csv(rusle_pixel_data, "rusle_summary_by_year_pixelwise.csv", row.names = FALSE)

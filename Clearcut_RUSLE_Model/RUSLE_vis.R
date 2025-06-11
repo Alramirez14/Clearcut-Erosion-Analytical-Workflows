@@ -7,12 +7,14 @@
 library(ggplot2)
 library(ggpmisc)
 library(mgcv)
+library(tidyr)
+library(dplyr)
 
 rusle_results <- read.csv("rusle_summary_by_year.csv")
 
 rusle_results_pixel <- read.csv("rusle_summary_by_year_pixelwise.csv")
 
-w# Define pretty variable names for facet labels
+# Define pretty variable names for facet labels
 pretty_names <- c(
   Mean_C = "Cover Factor (C) ",
   Delta_NDVI = "ΔNDVI (year-over-year)",
@@ -74,7 +76,6 @@ long_pixel_data <- rusle_results_pixel %>%
   )
 
 
-# Plot with facets, points, and linear trendline + R^2 equation
 ggplot(long_pixel_data, aes(x = Value, y = A)) +
   geom_point(alpha = 0.3, size = 0.5, color = "#1f77b4") +
   geom_smooth(method = "lm", se = FALSE, color = "black", linewidth = 0.8) +
@@ -102,16 +103,21 @@ ggplot(long_pixel_data, aes(x = Value, y = A)) +
 
 ###Time series
 
-ggplot(long_data, aes(x = Year, y = Value, group = 1)) +
+longer_data <- rusle_results %>%
+  select(Year, Mean_A, Mean_C, Delta_NDVI, Mean_R) %>%
+  pivot_longer(
+    cols = -Year,  # Pivot all columns except Year
+    names_to = "Variable",
+    values_to = "Value"
+  ) %>%
+  mutate(Variable = recode(Variable, !!!pretty_names))
+
+
+ggplot(longer_data, aes(x = Year, y = Value, group = 1)) +
   geom_line(color = "#2c7fb8", size = 1) +
   geom_point(color = "#2c7fb8", size = 2) +
-  facet_wrap(~ Variable, scales = "free_y", ncol = 1,
-             labeller = labeller(Variable = c(
-               Mean_A = "Mean Soil Loss (A)",
-               Mean_R = "Mean Rainfall Factor (R)",
-               Mean_C = "Mean Cover Factor (C)",
-               Delta_NDVI = "Change in NDVI (ΔNDVI)"
-             ))) +
+  facet_wrap(~ Variable, scales = "free_y", ncol = 2) +
+  scale_x_continuous(breaks = unique(longer_data$Year)) +  # Show ticks for each year
   theme_minimal(base_size = 14) +
   theme(
     strip.text = element_text(face = "bold", size = 14),
@@ -123,3 +129,5 @@ ggplot(long_data, aes(x = Year, y = Value, group = 1)) +
     y = NULL,
     title = "Time Series of RUSLE Components and Vegetation Change"
   )
+
+
